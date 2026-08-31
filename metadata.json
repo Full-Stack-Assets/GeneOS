@@ -1,0 +1,6 @@
+{
+  "name": "Genealogical Intelligence OS",
+  "description": "Deployment-neutral genealogical intelligence operating system with interactive LineageGraph, claim & evidence ledger, tree forensics, ProofPath solver, DNA enclave, ancestor simulation, and Gemini multi-agent research.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
