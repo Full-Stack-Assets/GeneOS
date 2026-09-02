@@ -122,10 +122,17 @@ Select a model mode (High Thinking or Low Latency) and ask any research question
 
       const data = await res.json();
 
+      let replyContent = data.reply || data.text;
+      if (!replyContent && data.error) {
+        replyContent = `⚠️ **Notice**: ${data.error}`;
+      } else if (!replyContent) {
+        replyContent = 'No response could be generated. Please retry your inquiry.';
+      }
+
       const aiMessage: Message = {
         id: `ai_${Date.now()}`,
         role: 'assistant',
-        content: data.reply || 'No response generated.',
+        content: replyContent,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         agentRole: activeRole,
         modelMode,
@@ -136,7 +143,7 @@ Select a model mode (High Thinking or Low Latency) and ask any research question
       const errorMessage: Message = {
         id: `err_${Date.now()}`,
         role: 'assistant',
-        content: `Error contacting Gemini research engine: ${err.message || 'Network error'}`,
+        content: `⚠️ **Connection Notice**: ${err.message || 'Network error communicating with the research engine'}. Please retry shortly.`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         agentRole: activeRole,
       };

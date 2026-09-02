@@ -43,28 +43,62 @@ app.get('/api/health', (req, res) => {
 });
 
 // Multi-Agent Gemini Chat Endpoint
-// Supports Thinking Level (HIGH for gemini-3.1-pro-preview), Low-latency (gemini-3.1-flash-lite), and General (gemini-3.5-flash)
+// Resilient multi-tier fallback with gemini-3.7-flash as default high-capability model
+async function generateContentWithFallback(
+  ai: GoogleGenAI,
+  candidateModels: string[],
+  contents: any,
+  config: any
+): Promise<{ text: string; modelUsed: string }> {
+  let lastError: any = null;
+
+  for (const model of candidateModels) {
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents,
+        config,
+      });
+      const text = response.text || '';
+      if (text) {
+        return { text, modelUsed: model };
+      }
+    } catch (err: any) {
+      console.warn(`Attempt with model "${model}" failed:`, err.message || err);
+      lastError = err;
+      // If thinkingConfig caused an issue on a fallback model, strip it on next tries
+      if (config.thinkingConfig) {
+        config = { ...config, thinkingConfig: undefined };
+      }
+    }
+  }
+
+  throw lastError || new Error('All model attempts failed');
+}
+
 app.post('/api/gemini/chat', async (req, res) => {
   try {
-    const { messages, agentRole, modelMode, contextData } = req.body;
-
-    if (!messages || !Array.isArray(messages) || messages.length === 0) {
-      return res.status(400).json({ error: 'Messages array is required' });
-    }
+    const { 
+      messages, 
+      message, 
+      history, 
+      agentRole = 'director', 
+      modelMode = 'general', 
+      contextData, 
+      treeContext 
+    } = req.body;
 
     const ai = getGenAI();
 
-    // Map model selection
-    let modelName = 'gemini-3.5-flash';
+    // Model candidate chain based on mode
+    let candidateModels: string[] = ['gemini-3.7-flash', 'gemini-3.5-flash', 'gemini-3.1-flash-lite'];
     let thinkingConfig: { thinkingLevel?: ThinkingLevel } | undefined = undefined;
 
     if (modelMode === 'high-thinking') {
-      modelName = 'gemini-3.1-pro-preview';
+      candidateModels = ['gemini-3.7-flash', 'gemini-3.5-flash', 'gemini-3.1-flash-lite'];
       thinkingConfig = { thinkingLevel: ThinkingLevel.HIGH };
     } else if (modelMode === 'low-latency') {
-      modelName = 'gemini-3.1-flash-lite';
-    } else {
-      modelName = 'gemini-3.5-flash';
+      candidateModels = ['gemini-3.1-flash-lite', 'gemini-3.7-flash', 'gemini-3.5-flash'];
     }
 
     // Role-specific System Instructions
@@ -78,25 +112,38 @@ Never state assumptions as facts. Explicitly label claims as [DOCUMENTED], [DERI
 
     if (agentRole === 'director') {
       roleInstruction += `\nROLE: Research Director. Formulate structured information-gain research plans, evaluate brick-walls, prioritize next collection searches, and identify evidence gaps.`;
-    } else if (agentRole === 'falsification') {
+    } else if (agentRole === 'falsifier' || agentRole === 'falsification') {
       roleInstruction += `\nROLE: Genealogical Falsification Agent. Actively critique and stress-test genealogical conclusions. Search for alternative explanations, identity conflations (namesake traps), chronological inconsistencies, and geographical impossibilities. Propose specific records that could disprove the current theory.`;
-    } else if (agentRole === 'dna') {
+    } else if (agentRole === 'geneticist' || agentRole === 'dna') {
       roleInstruction += `\nROLE: Genetic Genealogist & DNA Correlation Agent. Analyze centiMorgan (cM) sharing, segment triangulation, Mendelian inheritance rules, pedigree collapse, and endogamy. Connect DNA evidence to documentary evidence.`;
     } else if (agentRole === 'paleographer') {
       roleInstruction += `\nROLE: Paleographer & Document Specialist. Transcribe and interpret historical scripts, 18th/19th century abbreviations, parish record terminology, legal phrasing, and Latin/archaic entries.`;
-    } else if (agentRole === 'context') {
+    } else if (agentRole === 'historian' || agentRole === 'context') {
       roleInstruction += `\nROLE: Historical Context & Migration Agent. Provide time-and-place context including historical events, epidemics, local statutes, transport routes, and community/FAN (Friends, Associates, Neighbors) networks.`;
     }
 
-    if (contextData) {
-      roleInstruction += `\n\nCURRENT TREE & EVIDENCE CONTEXT:\n${typeof contextData === 'string' ? contextData : JSON.stringify(contextData, null, 2)}`;
+    const contextPayload = contextData || treeContext;
+    if (contextPayload) {
+      roleInstruction += `\n\nCURRENT TREE & EVIDENCE CONTEXT:\n${typeof contextPayload === 'string' ? contextPayload : JSON.stringify(contextPayload, null, 2)}`;
     }
 
-    // Prepare contents
-    const contents = messages.map((m: { role: string; content: string }) => ({
-      role: m.role === 'user' ? 'user' : 'model',
-      parts: [{ text: m.content }],
-    }));
+    // Prepare contents array
+    let contents: any[] = [];
+    if (Array.isArray(messages) && messages.length > 0) {
+      contents = messages.map((m: { role: string; content: string }) => ({
+        role: m.role === 'user' ? 'user' : 'model',
+        parts: [{ text: m.content }],
+      }));
+    } else if (Array.isArray(history) && history.length > 0) {
+      contents = [
+        ...history,
+        ...(message ? [{ role: 'user', parts: [{ text: message }] }] : []),
+      ];
+    } else if (message) {
+      contents = [{ role: 'user', parts: [{ text: message }] }];
+    } else {
+      return res.status(400).json({ error: 'A message or messages array is required' });
+    }
 
     const config: any = {
       systemInstruction: roleInstruction,
@@ -107,29 +154,35 @@ Never state assumptions as facts. Explicitly label claims as [DOCUMENTED], [DERI
       config.thinkingConfig = thinkingConfig;
     }
 
-    const response = await ai.models.generateContent({
-      model: modelName,
+    const { text: responseText, modelUsed } = await generateContentWithFallback(
+      ai,
+      candidateModels,
       contents,
-      config,
-    });
-
-    const responseText = response.text || '';
+      config
+    );
 
     res.json({
       text: responseText,
-      modelUsed: modelName,
+      reply: responseText,
+      modelUsed,
       thinkingEnabled: modelMode === 'high-thinking',
     });
   } catch (error: any) {
     console.error('Gemini chat error:', error);
-    res.status(500).json({
-      error: error.message || 'Failed to process genealogical AI request',
-      details: error.toString(),
+    const isQuota = error.message?.includes('429') || error.message?.includes('quota') || error.message?.includes('RESOURCE_EXHAUSTED');
+    res.status(isQuota ? 429 : 500).json({
+      error: isQuota 
+        ? 'Gemini API free tier rate limit was reached. Please retry in a few seconds or configure a custom API key in Settings.'
+        : error.message || 'Failed to process genealogical AI request',
+      reply: isQuota
+        ? 'The Gemini free tier rate limit was temporarily reached. Please retry your request in a moment.'
+        : `Request could not be completed: ${error.message || 'Unknown error'}`,
+      isQuota,
     });
   }
 });
 
-// Image Generation using gemini-3-pro-image-preview with 1K, 2K, 4K affordance
+// Image Generation using gemini-3.1-flash-image with 1K, 2K, 4K resolution support
 app.post('/api/gemini/generate-image', async (req, res) => {
   try {
     const { prompt, imageSize = '1K', aspectRatio = '1:1', historicalContext } = req.body;
@@ -140,32 +193,49 @@ app.post('/api/gemini/generate-image', async (req, res) => {
 
     const ai = getGenAI();
 
-    // Model name as specified in instructions
-    const modelName = 'gemini-3-pro-image-preview';
-
     // Enrich prompt with historical precision
     let fullPrompt = prompt;
     if (historicalContext) {
       fullPrompt = `Authentic historical depiction: ${prompt}. Period context: ${historicalContext}. Accurate period attire, atmospheric lighting, museum archival quality, high detail.`;
     }
 
-    const response = await ai.models.generateContent({
-      model: modelName,
-      contents: {
-        parts: [{ text: fullPrompt }],
-      },
-      config: {
-        imageConfig: {
-          aspectRatio: aspectRatio || '1:1',
-          imageSize: imageSize || '1K',
+    // Try gemini-3.1-flash-image, falling back to gemini-3.1-flash-lite-image if needed
+    let response: any;
+    let modelUsed = 'gemini-3.1-flash-image';
+
+    try {
+      response = await ai.models.generateContent({
+        model: 'gemini-3.1-flash-image',
+        contents: {
+          parts: [{ text: fullPrompt }],
         },
-      },
-    });
+        config: {
+          imageConfig: {
+            aspectRatio: aspectRatio || '1:1',
+            imageSize: imageSize || '1K',
+          },
+        },
+      });
+    } catch (primaryErr: any) {
+      console.warn('gemini-3.1-flash-image encountered an error, falling back to gemini-3.1-flash-lite-image:', primaryErr.message);
+      modelUsed = 'gemini-3.1-flash-lite-image';
+      response = await ai.models.generateContent({
+        model: 'gemini-3.1-flash-lite-image',
+        contents: {
+          parts: [{ text: fullPrompt }],
+        },
+        config: {
+          imageConfig: {
+            aspectRatio: aspectRatio || '1:1',
+          },
+        },
+      });
+    }
 
     let imageUrl: string | null = null;
     let descriptionText: string | null = null;
 
-    if (response.candidates && response.candidates[0]?.content?.parts) {
+    if (response?.candidates && response.candidates[0]?.content?.parts) {
       for (const part of response.candidates[0].content.parts) {
         if (part.inlineData) {
           const base64Data = part.inlineData.data;
@@ -186,15 +256,22 @@ app.post('/api/gemini/generate-image', async (req, res) => {
 
     res.json({
       imageUrl,
+      image: imageUrl,
       description: descriptionText || fullPrompt,
       size: imageSize,
       aspectRatio,
-      modelUsed: modelName,
+      modelUsed,
     });
   } catch (error: any) {
     console.error('Gemini image generation error:', error);
-    res.status(500).json({
-      error: error.message || 'Image generation failed',
+    const isQuotaError = error.message?.includes('429') || error.message?.includes('quota') || error.message?.includes('RESOURCE_EXHAUSTED');
+    
+    // Provide a descriptive status code and message
+    res.status(isQuotaError ? 429 : 500).json({
+      error: isQuotaError
+        ? 'Gemini Image Generation rate limit or free tier quota reached. Please wait a moment or select a custom key in Settings.'
+        : error.message || 'Image generation failed',
+      isQuotaError,
       details: error.toString(),
     });
   }
@@ -218,38 +295,59 @@ Provide a rigorous proof analysis with:
 3. Three concrete Falsification Tests (specific records or tests that would invalidate this claim)
 4. Recommended Next Action to achieve Genealogical Proof Standard (GPS) compliance.`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.1-pro-preview',
-      contents: prompt,
-      config: {
+    const { text: responseText, modelUsed } = await generateContentWithFallback(
+      ai,
+      ['gemini-3.7-flash', 'gemini-3.5-flash', 'gemini-3.1-flash-lite'],
+      prompt,
+      {
         thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
         systemInstruction: 'You are the Chief Falsification Officer of the Genealogical Intelligence OS. Your duty is to prevent false lineages and challenge premature conclusions with rigorous historical evidence rules.',
-      },
-    });
+      }
+    );
 
     res.json({
-      analysis: response.text,
-      modelUsed: 'gemini-3.1-pro-preview',
+      analysis: responseText,
+      modelUsed,
       timestamp: new Date().toISOString(),
     });
   } catch (error: any) {
     console.error('Falsification error:', error);
-    res.status(500).json({ error: error.message || 'Falsification audit failed' });
+    const isQuota = error.message?.includes('429') || error.message?.includes('quota') || error.message?.includes('RESOURCE_EXHAUSTED');
+    res.status(isQuota ? 429 : 500).json({ 
+      error: isQuota 
+        ? 'Gemini rate limit reached. Please retry in a few moments.' 
+        : error.message || 'Falsification audit failed' 
+    });
   }
 });
 
 // Specialized Ancestor Simulation Generator
 app.post('/api/gemini/simulate-ancestor', async (req, res) => {
   try {
-    const { person, year, fidelityLevel, location, documentedEvents } = req.body;
+    const { 
+      person, 
+      year, 
+      fidelityLevel, 
+      constraintLevel, 
+      userPrompt, 
+      location, 
+      documentedEvents, 
+      tree 
+    } = req.body;
     const ai = getGenAI();
 
+    const effectiveLevel = constraintLevel !== undefined ? constraintLevel : (fidelityLevel !== undefined ? fidelityLevel : 2);
+    const targetYear = year || (person?.birthDate ? (parseInt(person.birthDate, 10) + 25) : 1845);
+    const targetLoc = location || person?.birthPlace || 'Historical Locale';
+
     const prompt = `Generate an evidence-constrained Ancestor Historical Simulation:
-PERSON: ${person.firstName} ${person.lastName} (${person.birthDate || 'Unknown'} - ${person.deathDate || 'Unknown'})
-SIMULATION TARGET YEAR: ${year}
-LOCATION: ${location || person.birthPlace || 'Historical Locale'}
-FIDELITY LEVEL: ${fidelityLevel} (0=Evidence Replay, 1=Bounded Reconstruction, 2=Possible-World, 3=Contextual Experience, 4=Counterfactual, 5=Illustrative Narrative)
-DIRECTLY DOCUMENTED EVENTS: ${JSON.stringify(documentedEvents, null, 2)}
+PERSON: ${person?.firstName || 'Ancestor'} ${person?.lastName || ''} (${person?.birthDate || 'Unknown'} - ${person?.deathDate || 'Unknown'})
+OCCUPATION: ${person?.occupation || 'Agricultural laborer / Homesteader'}
+SIMULATION TARGET YEAR: ${targetYear}
+LOCATION: ${targetLoc}
+FIDELITY / CONSTRAINT LEVEL: ${effectiveLevel} (0=Evidence Replay, 1=Bounded Reconstruction, 2=Possible-World, 3=Contextual Experience, 4=Counterfactual, 5=Illustrative Narrative)
+USER QUERY / RESEARCH SCENARIO: ${userPrompt || 'Simulate daily routines, agricultural chores, community interactions, and historical context during harvest season.'}
+DIRECTLY DOCUMENTED EVENTS & CLAIMS: ${JSON.stringify(documentedEvents || person?.claims || [], null, 2)}
 
 Requirements:
 - Adhere strictly to the chosen fidelity level.
@@ -261,20 +359,30 @@ Requirements:
   - [UNKNOWN]: Unresolved mystery or unrecorded aspect.
 - Provide a summary of living conditions, daily occupation, and local community context.`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.5-flash',
-      contents: prompt,
-    });
+    const { text: responseText, modelUsed } = await generateContentWithFallback(
+      ai,
+      ['gemini-3.7-flash', 'gemini-3.5-flash', 'gemini-3.1-flash-lite'],
+      prompt,
+      {}
+    );
 
     res.json({
-      simulationText: response.text,
-      fidelityLevel,
-      year,
+      simulation: responseText,
+      simulationText: responseText,
+      modelUsed,
+      fidelityLevel: effectiveLevel,
+      constraintLevel: effectiveLevel,
+      year: targetYear,
       timestamp: new Date().toISOString(),
     });
   } catch (error: any) {
     console.error('Simulation error:', error);
-    res.status(500).json({ error: error.message || 'Simulation generation failed' });
+    const isQuota = error.message?.includes('429') || error.message?.includes('quota') || error.message?.includes('RESOURCE_EXHAUSTED');
+    res.status(isQuota ? 429 : 500).json({ 
+      error: isQuota 
+        ? 'Gemini rate limit reached. Please retry in a few moments.' 
+        : error.message || 'Simulation generation failed' 
+    });
   }
 });
 

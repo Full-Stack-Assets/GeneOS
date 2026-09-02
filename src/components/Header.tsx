@@ -33,6 +33,7 @@ interface HeaderProps {
   onOpenUpload: () => void;
   onOpenExport: () => void;
   onLoadSample: () => void;
+  onLoadAlbertsonTree?: () => void;
   defectsCount: number;
 }
 
@@ -43,6 +44,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenUpload,
   onOpenExport,
   onLoadSample,
+  onLoadAlbertsonTree,
   defectsCount,
 }) => {
   const tabs: Array<{ id: ActiveTab; label: string; icon: React.ComponentType<{ className?: string }>; badge?: number | string }> = [
@@ -81,13 +83,23 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Global Action Buttons */}
         <div className="flex items-center gap-2">
+          {onLoadAlbertsonTree && (
+            <button
+              onClick={onLoadAlbertsonTree}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-500 hover:to-amber-600 text-xs font-semibold text-stone-950 shadow-md transition"
+              title="Populate Albertson Family Tree (Major Garrett Albertson, 19th Ohio Civil War, & All Lineages)"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-stone-950 fill-stone-950" />
+              Populate Albertson Tree
+            </button>
+          )}
           <button
             onClick={onLoadSample}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-stone-800 hover:bg-stone-700 text-xs font-medium text-amber-300 border border-stone-700 transition"
             title="Load PEI Morrow-Coffin Validation Case"
           >
-            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-            Load Validation Case
+            <Database className="w-3.5 h-3.5 text-amber-400" />
+            Morrow Case
           </button>
           <button
             onClick={onOpenUpload}
@@ -99,7 +111,7 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
           <button
             onClick={onOpenExport}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-amber-700 hover:bg-amber-600 text-xs font-medium text-amber-100 shadow transition"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-stone-800 hover:bg-stone-700 text-xs font-medium text-stone-300 border border-stone-700 shadow transition"
             title="Export standard GEDCOM 7.0 or Research Bundle"
           >
             <Download className="w-3.5 h-3.5" />

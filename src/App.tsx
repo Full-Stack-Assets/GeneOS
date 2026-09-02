@@ -15,14 +15,15 @@ import { AncestorSimulationView } from './components/Simulation/AncestorSimulati
 import { GeminiResearchChat } from './components/AiCopilot/GeminiResearchChat';
 import { TreeData, Person, Claim, ClaimStatus, EvidenceItem, Family } from './types/genealogy';
 import { SEED_TREE_MORROW_COFFIN } from './data/seedData';
+import { ALBERTSON_FAMILY_TREE } from './data/albertsonTree';
 import { runTreeForensicsAudit } from './utils/forensics';
 
 export default function App() {
-  const [tree, setTree] = useState<TreeData>(SEED_TREE_MORROW_COFFIN);
+  const [tree, setTree] = useState<TreeData>(ALBERTSON_FAMILY_TREE);
   const [activeTab, setActiveTab] = useState<ActiveTab>('lineage-graph');
 
   // Selected entities
-  const [selectedPersonId, setSelectedPersonId] = useState<string | null>('p-morrow-john-1');
+  const [selectedPersonId, setSelectedPersonId] = useState<string | null>('p_garrett_albertson_1735');
   const [selectedEvidence, setSelectedEvidence] = useState<EvidenceItem | null>(null);
 
   // Modals
@@ -186,6 +187,10 @@ export default function App() {
         tree={tree}
         onOpenUpload={() => setIsUploadOpen(true)}
         onOpenExport={() => setIsExportOpen(true)}
+        onLoadAlbertsonTree={() => {
+          setTree(ALBERTSON_FAMILY_TREE);
+          setSelectedPersonId('p_garrett_albertson_1735');
+        }}
         onLoadSample={() => {
           setTree(SEED_TREE_MORROW_COFFIN);
           setSelectedPersonId('p-morrow-john-1');

@@ -41,6 +41,7 @@ export const AncestorSimulationView: React.FC<AncestorSimulationViewProps> = ({
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   const [generatedImageUrl, setGeneratedImageUrl] = useState<string | null>(null);
   const [imagePromptInput, setImagePromptInput] = useState('');
+  const [imageError, setImageError] = useState<string | null>(null);
 
   const selectedPerson = tree.persons.find((p) => p.id === selectedPersonId);
 
@@ -62,13 +63,13 @@ export const AncestorSimulationView: React.FC<AncestorSimulationViewProps> = ({
         }),
       });
       const data = await res.json();
-      setNarrativeOutput(data.simulation);
+      setNarrativeOutput(data.simulation || data.simulationText);
       setEpistemicReceipt({
         constraintLevel: simulationLevel,
         personName: `${selectedPerson.firstName} ${selectedPerson.lastName}`,
         timestamp: new Date().toISOString(),
       });
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
       setNarrativeOutput('Failed to execute simulation via backend engine.');
     } finally {
@@ -79,6 +80,7 @@ export const AncestorSimulationView: React.FC<AncestorSimulationViewProps> = ({
   const handleGenerateHistoricalImage = async () => {
     if (!selectedPerson) return;
     setIsGeneratingImage(true);
+    setImageError(null);
 
     const prompt =
       imagePromptInput ||
@@ -94,11 +96,14 @@ export const AncestorSimulationView: React.FC<AncestorSimulationViewProps> = ({
         }),
       });
       const data = await res.json();
-      if (data.image) {
-        setGeneratedImageUrl(data.image);
+      if (data.imageUrl || data.image) {
+        setGeneratedImageUrl(data.imageUrl || data.image);
+      } else if (data.error) {
+        setImageError(data.error);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      setImageError(err.message || 'Image generation network error.');
     } finally {
       setIsGeneratingImage(false);
     }
@@ -257,13 +262,13 @@ export const AncestorSimulationView: React.FC<AncestorSimulationViewProps> = ({
             </div>
           </div>
 
-          {/* Historical Scene Visualizer (Gemini 3 Pro Image) */}
+          {/* Historical Scene Visualizer (Gemini 3.1 Flash Image) */}
           <div className="bg-stone-900 border border-stone-800 p-5 rounded-2xl shadow-xl space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <ImageIcon className="w-5 h-5 text-purple-400" />
                 <h4 className="font-['Cinzel'] font-bold text-sm text-stone-100">
-                  Historical Visual Reconstruction (Gemini 3 Pro Image)
+                  Historical Visual Reconstruction (Gemini 3.1 Flash Image)
                 </h4>
               </div>
 
@@ -301,11 +306,19 @@ export const AncestorSimulationView: React.FC<AncestorSimulationViewProps> = ({
               </button>
             </div>
 
+            {imageError && (
+              <div className="p-3 bg-rose-950/40 border border-rose-500/40 rounded-xl flex items-center gap-2 text-xs font-mono text-rose-300">
+                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                <span>{imageError}</span>
+              </div>
+            )}
+
             {generatedImageUrl && (
               <div className="mt-4 rounded-xl overflow-hidden border border-purple-500/40 bg-stone-950 text-center p-2">
                 <img
                   src={generatedImageUrl}
                   alt="Reconstructed Ancestor Scene"
+                  referrerPolicy="no-referrer"
                   className="w-full max-h-96 object-contain rounded-lg mx-auto"
                 />
               </div>
